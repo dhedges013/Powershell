@@ -1,17 +1,40 @@
 Import-Module $env:SyncroModule
+<#
+$subnet = "192.168.1.0" # you can use a runtime variable 
+$sn = $subnet.Substring(0,7)
+$arpNeighbors = Get-NetNeighbor -AddressFamily IPv4 -IPAddress *$sn* | select Ipaddress, LinkLayerAddress, State
+$body = $arpNeighbors | Where-Object { $_.State -ne "Unreachable" }
+
+$portlist = 22,23,25,80,443,3389,5900
+$portlist = 1..1024
+$openport = "False"
+#>
 
 # Set the Variable for the API Call
-# $customerID = "23775538"
-# $CustomerName = "Cyncro City"
-# $SyncroAPIkey = "T8a09539ff5620a876-2d4506fa4df41e670"
-# $subdomain = "hedgesmsp"
-# $SubnetRuntime = ""
+$customerID = "23775538"
+$CustomerName = "Cyncro City"
+$SyncroAPIkey = "T8a09539ff5620a876-2d45062d27427a6911eb1fa4df41e670"
+$subdomain = "hedgesmsp"
+$SubnetRuntime = ""
+$OverrideToRuntime = "no"
+$subnetDropDown = "192.168.1"
 
+#Add your subdomain instead of 'hedgesmsp'
+#$url = "https://"+$subdomain+".syncromsp.com/api/v1/customers"
 
+# Add you API Token Here
 [string]$today = get-date -format MM/dd/yyyy
-# Creates Document Name for Wiki
-$name = "Syncro - $CustomerName - Network Scan - $today"
+# Creates Header for API Call
+$name = "Workstation - $CustomerName - Network Scan - $today"
 
+if($OverrideToRuntime -eq "no"){
+    
+    $subnetRuntime = $subnetDropDown
+}
+else{
+    $subnetRuntime = $subnetRuntime
+    
+}
 
 function update-ArpTable($subnetRuntime) {
 
@@ -43,12 +66,16 @@ function update-ArpTable($subnetRuntime) {
 
     #filter broadcast linklayer address
     $bc = "FF-FF-FF-FF-FF-FF"
+
     # get subnet neighbors using updated arp table
     $bodyArp = (Get-NetNeighbor -AddressFamily IPv4 -IPAddress *$subnetRuntime*  | Where-Object { $_.State -ne "Unreachable"}) | Where-Object { $_.LinkLayerAddress -NotContains $bc } 
     #Write-host $bodyArp
     write-host "**********************************************************************************************************************************************"
     return $bodyArp
 }
+#write-host("Running Update Arp")
+#update-ArpTable($subnetRuntime)
+
 
 function createNetworkTable {
 
@@ -76,6 +103,71 @@ function createNetworkTable {
     
 }
 
+#write-host("Running CreatingNetworkTable")
+#createNetworkTable
+
+
+
+$updatedArp = update-ArpTable($subnetRuntime)
+
+foreach ($arp in $updatedArp){
+
+    $ipaddress = $arp.ipaddress
+    portChecker($ipaddress)
+
+         
+}
+
+
+function portChecker($ipaddress){
+    $portlist = @(22,23,25,80,443,3389,5900)
+          
+    $openList = New-Object System.Collections.ArrayList 
+
+    $ComputerName = $ipaddress
+    write-host "This is the IP address variable: $ComputerName"
+    
+    foreach($p in $portlist){
+        
+        $TimeOut = "100"
+        $RequestCallback = $State = $Null
+        $Client = New-Object System.Net.Sockets.TcpClient
+
+        #Write-host "This is $p"
+
+        #Output is avoided
+        $Client.BeginConnect($ComputerName,$p,$RequestCallback,$State)|Out-Null
+
+        #Stop the iterative test at 100 ms. 
+        Start-Sleep -Milliseconds $TimeOut
+
+        if ($Client.Connected){ 
+            $Open = $true
+            $openList += $p
+            
+        }
+        else{
+            $Open = $false
+        }
+        #$results = "Port $p on $ComputerName is open: "+[string]$Open
+        $Client.Close()
+        
+        #write-host $results
+     
+     }
+
+    return $openList
+}
+
+
+
+
+
+
+
+
+<#
+
 function createHTML{
     #HTML Table header
     $html="
@@ -93,9 +185,13 @@ function createHTML{
 
     #Close HTML tags
     $html +="</table></body></html>"
-    $html > C:\temp\testhtmlSyncro.html
+    $html > C:\temp\testhtml.html
     return $html
 }
+
+#write-host("Running createHTML")
+#createHTML
+
 
 function Create-WikiPage () {
 
@@ -109,7 +205,7 @@ function Create-WikiPage () {
     Creates a new document for a customer in Syncro
     .NOTES
     NAME: Create-WikiPage
-    #>
+    #><#
 
     [cmdletbinding()]
 
@@ -139,4 +235,4 @@ function Create-WikiPage () {
 
 $html = createHTML
 
-Create-WikiPage -subdomain $subdomain -SyncroAPIKey $SyncroAPIkey -customerID $customerID -name $name -body $html
+Create-WikiPage -subdomain $subdomain -SyncroAPIKey $SyncroAPIkey -customerID $customerID -name $name -body $html#>

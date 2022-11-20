@@ -1,0 +1,166 @@
+Import-Module $env:SyncroModule
+<#
+$subnet = "192.168.1.0" # you can use a runtime variable 
+$sn = $subnet.Substring(0,7)
+$arpNeighbors = Get-NetNeighbor -AddressFamily IPv4 -IPAddress *$sn* | select Ipaddress, LinkLayerAddress, State
+$body = $arpNeighbors | Where-Object { $_.State -ne "Unreachable" }
+
+$portlist = 22,23,25,80,443,3389,5900
+$portlist = 1..1024
+$openport = "False"
+#>
+
+# Set the Variable for the API Call
+$customerID = "23775538"
+$CustomerName = "Cyncro City"
+$SyncroAPIkey = "T8a09539ff5620a876-2d45062d27427a6911eb1fa4df41e670"
+$subdomain = "hedgesmsp"
+$SubnetRuntime = ""
+$OverrideToRuntime = "no"
+$subnetDropDown = "192.168.1"
+
+#Add your subdomain instead of 'hedgesmsp'
+$url = "https://"+$subdomain+".syncromsp.com/api/v1/customers"
+
+# Add you API Token Here
+[string]$today = get-date -format MM/dd/yyyy
+# Creates Header for API Call
+$name = "$CustomerName - Network Scan - $today"
+
+if($OverrideToRuntime -eq "no"){
+    
+    $subnetRuntime = $subnetDropDown
+}
+else{
+    $subnetRuntime = $subnetRuntime
+    
+}
+
+function update-ArpTable($subnetRuntime) {
+
+    # Updating the ARP Table will allow for faster and targeted Test-Connection Calls. Test-Connection is to slow otherwise
+    # Create UDP Object for Arp Test
+    $ASCIIEncoding = New-Object System.Text.ASCIIEncoding
+    $Bytes = $ASCIIEncoding.GetBytes("a")
+    $UDP = New-Object System.Net.Sockets.Udpclient
+
+    #list of all possible ips on current subnet
+    $IPs = 1..254 | % {"$subnetRuntime.$_"}
+    $IPs
+
+    #clear old arp table
+    arp -d
+
+    # Check for online endpoints
+    $IPs | ForEach-Object {    
+        #Write-Output "trying $_ "
+        $UDP.Connect($_,1)
+        [void]$UDP.Send($Bytes,$Bytes.length)
+    }
+
+    #display the arp table
+    arp -a
+
+    # some reason a 5 second wait is required for the Get-NetNeighbor to grab the updated info
+    Start-Sleep -Seconds 5
+
+    #filter broadcast linklayer address
+    $bc = "FF-FF-FF-FF-FF-FF"
+    # get subnet neighbors using updated arp table
+    $bodyArp = (Get-NetNeighbor -AddressFamily IPv4 -IPAddress *$subnetRuntime*  | Where-Object { $_.State -ne "Unreachable"}) | Where-Object { $_.LinkLayerAddress -NotContains $bc } 
+    Write-host $bodyArp
+    write-host "**********************************************************************************************************************************************"
+    return $bodyArp
+}
+
+
+function createNetworkTable {
+
+    $x = 0
+    $networkTable = @{}
+
+    $updatedArp = update-ArpTable($subnetRuntime)  
+    $updatedArp = $bodyArp
+    foreach ($arp in $updatedArp){        
+        $entryArray =@($arp.Ipaddress,$arp.LinkLayerAddress,$arp.State) 
+        $dnsname = nslookup($arp.Ipaddress)
+
+        if ($dnsname[3] -and $dnsname[3].contains("Name:")){
+            $Hostname = try {$dnsname[3].replace('Name:    ','')} catch{$Hostname = "Name not found"}
+        }
+        else{
+            $Hostname = [string]$x+" Name not found"
+        }
+        $networkTable.add($Hostname,$entryArray)
+        
+        $x=$x+1
+    }
+    write-host $networkTable
+    return $networkTable
+    
+}
+
+function createHTML{
+    #HTML Table header
+    $html="
+    <Html>
+    <Body>
+    <Table border=1 style='border-collapse: collapse;width:50%;text-align:center'>
+    <th>Hostname</th> <th>IPaddress</th> <th>LinkLayerAddress</th> <th>State</th>"
+
+    #adding HTML table row
+    $data = createNetworkTable
+
+    $data.GetEnumerator() | ForEach-Object{
+        $html += "<tr> <td> $($_.key) </td> <td> $($_.value[0]) </td> <td> $($_.value[1]) </td> <td> $($_.value[2]) </td></tr>"    
+    }
+
+    #Close HTML tags
+    $html +="</table></body></html>"
+    $html > C:\temp\testhtml.html
+    return $html
+}
+
+function Create-WikiPage () {
+
+    <#
+    .SYNOPSIS
+    This function is used to create a document for a customer in Syncro. 
+    .DESCRIPTION
+    The function connects to your Syncro environment and creates a document for a customer
+    .EXAMPLE
+    Create-WikiPage -SyncroSubDomain $SyncroSubDomain -SyncroAPIKey $SyncroAPIkey -customerID $customerID -name $name -body $body
+    Creates a new document for a customer in Syncro
+    .NOTES
+    NAME: Create-WikiPage
+    #>
+
+    [cmdletbinding()]
+
+    param
+    (
+        [Parameter(Mandatory=$true)]
+        [string]$subdomain,
+        [string]$SyncroAPIKey,
+        [string]$customerID,
+        [string]$name,
+        $body
+    )
+
+    $CreatePage =@{
+        customer_id = $customerID
+        name = $name
+        body= $body
+        api_key=$SyncroAPIKey
+    }
+
+    $body = (ConvertTo-Json $CreatePage)
+    $url =  "https://$($subdomain).syncromsp.com/api/v1/wiki_pages"
+    $response = Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType 'application/json'
+    $response
+
+}
+
+$html = createHTML
+
+Create-WikiPage -subdomain $subdomain -SyncroAPIKey $SyncroAPIkey -customerID $customerID -name $name -body $html

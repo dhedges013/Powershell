@@ -1,0 +1,69 @@
+$subnet = "192.168.1.0" # you can use a runtime variable 
+$sn = $subnet.Substring(0,7)
+$arpNeighbors = Get-NetNeighbor -AddressFamily IPv4 -IPAddress *$sn* | select Ipaddress, LinkLayerAddress, State
+$body = $arpNeighbors #| Where-Object { $_.State -eq "Reachable" }
+
+$portlist = 22,23,25,80,443,3389,5900
+$portlist = 1..1024
+
+$openport = "False"
+foreach($ip in $body){
+    
+    $ip = $ip.Ipaddress
+    #write-host $ip
+    $pingable = Test-Connection -count 1 -comp $ip -quiet
+    #$test = Test-NetConnection -RemoteAddress $ip
+    if($pingable -eq "True"){
+
+
+    write-host " $ip is pingable"
+    write-host "------------"
+
+    }
+    foreach($port in $portlist){
+        
+        function testport ($hostname=$ip,$port=$port,$timeout=100) {
+
+          $requestCallback = $state = $null
+
+          $client = New-Object System.Net.Sockets.TcpClient
+          $beginConnect = $client.BeginConnect($hostname,$port,$requestCallback,$state)
+          
+          Start-Sleep -milli $timeOut
+          
+          if ($client.Connected) { 
+                $open = $true 
+           }
+           else { 
+                $open = $false 
+          }
+
+          $client.Close()
+          [pscustomobject]@{hostname=$hostname;port=$port;open=$open}
+        }
+
+        $test = testport
+
+        #Resolve-DnsName -Name $hostname 
+
+        $hostname     = $test.hostname
+        #$Computer = Resolve-DnsName -Name $hostname 
+        $port = $test.port
+        $open = $test.open
+
+        if($open -eq "true"){   
+        
+            Write-host "ip $hostname  has port $port Open"                   
+            $openport = "True"
+            
+        }       
+
+    }
+
+    if($openport -eq "true"){
+
+    write-host "*******************************************************************"
+    $openport = "False"
+    }
+}
+
